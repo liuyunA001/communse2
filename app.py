@@ -499,13 +499,15 @@ with tab_ai:
         st.session_state.chat_history = []
     
     if match_btn and user_input:
-        matched_items = filtered_df.copy()
+        # 使用原始数据进行匹配，不受侧边栏筛选影响
+        matched_items = df.copy()
         import re
         price_match = re.search(r'预算(\d+)元|价格(\d+)元|(\d+)元', user_input)
         if price_match:
             target_price = int(price_match.group(1) or price_match.group(2) or price_match.group(3))
             matched_items = matched_items[(matched_items['price'] >= target_price - 100) & 
                                           (matched_items['price'] <= target_price + 100)]
+        
         category_keywords = ['教材','电器','数码','家具','服装','运动','美妆','食品','书籍']
         matched_categories = [k for k in category_keywords if k in user_input]
         if matched_categories:
