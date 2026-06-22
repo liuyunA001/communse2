@@ -252,11 +252,6 @@ if st.session_state.show_settings:
                 st.error("密码错误")
         if st.session_state.is_admin:
             st.info("当前为管理员模式")
-            st.markdown("---")
-            st.subheader("🤖 API配置")
-            st.session_state.api_key = st.text_input("API Key", value=st.session_state.get("api_key", ""), type="password")
-            st.session_state.base_url = st.text_input("Base URL", value=st.session_state.get("base_url", "https://api.deepseek.com/v1"))
-            st.session_state.model = st.text_input("Model", value=st.session_state.get("model", "deepseek-chat"))
 
 # -------------------- 侧边栏 --------------------
 with st.sidebar:
@@ -565,4 +560,4 @@ with tab_sell:
                 st.error("请填写完整的商品信息（名称、类别、价格、联系方式为必填项）")
 
 st.markdown("---")
-st.caption("💡 提示：点击右上角 ⚙️ 配置API Key后即可使用AI功能")
+st.caption(" 提示：AI功能已自动配置，可直接使用")
