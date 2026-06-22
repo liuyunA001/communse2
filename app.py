@@ -270,6 +270,26 @@ DESC_PROMPT = """
 【估价范围】：xxx元 - xxx元
 """
 
+POLISH_PROMPT = """
+你是一个专业的文案润色专家。请帮我把以下商品描述变得更吸引人、更有说服力：
+
+原始描述：
+{original_text}
+
+商品名称：{item_name}
+商品类别：{category}
+商品成色：{condition}
+商品价格：{price}元
+
+请润色这段描述，使其：
+1. 更加生动、吸引人
+2. 突出商品的优点和卖点
+3. 使用恰当的形容词
+4. 保持在50-80字左右
+
+润色后的文案：
+"""
+
 # -------------------- 管理员设置 --------------------
 if "show_settings" not in st.session_state:
     st.session_state.show_settings = False
@@ -579,6 +599,47 @@ with tab_sell:
             seller_grade = st.selectbox("卖家年级", ["大一","大二","大三","大四","研究生"])
             contact = st.text_input("联系方式", placeholder="例如：QQ:123456789 或 微信:xxx")
             description = st.text_area("商品描述", placeholder="描述商品的具体情况...", height=100)
+        
+        # AI 润色文案功能
+        polish_btn = st.button("✨ AI 润色文案", key="polish_btn")
+        if polish_btn:
+            if item_name and description:
+                client = get_ai_client()
+                if client:
+                    with st.spinner("AI正在润色文案..."):
+                        try:
+                            prompt = POLISH_PROMPT.format(
+                                original_text=description,
+                                item_name=item_name,
+                                category=category,
+                                condition=condition,
+                                price=price
+                            )
+                            response = client.chat.completions.create(
+                                model=st.session_state.model,
+                                messages=[{"role":"user","content":prompt}],
+                                temperature=0.7
+                            )
+                            polished_text = response.choices[0].message.content.strip()
+                            # 使用 session_state 存储润色后的文案
+                            st.session_state.polished_description = polished_text
+                            # 重新加载页面以显示润色后的文案
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"AI润色失败: {str(e)}")
+                else:
+                    st.warning("请先配置API Key")
+            else:
+                st.warning("请先填写商品名称和描述")
+        
+        # 如果有润色后的文案，显示并使用它
+        if "polished_description" in st.session_state and st.session_state.polished_description:
+            st.success("🎉 文案润色完成！")
+            st.text_area("润色后的描述", value=st.session_state.polished_description, height=100, key="polished_desc")
+            if st.button("使用润色后的文案"):
+                description = st.session_state.polished_description
+                del st.session_state.polished_description
+                st.rerun()
         
         submit_btn = st.form_submit_button("发布商品")
         if submit_btn:
