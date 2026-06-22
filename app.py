@@ -586,63 +586,63 @@ with tab_ai:
 with tab_sell:
     st.subheader("💰 发布闲置商品")
     st.markdown("填写以下信息发布您的闲置物品")
+    
+    # 使用 session_state 保存表单数据，以便在表单外使用
+    if "sell_item_name" not in st.session_state:
+        st.session_state.sell_item_name = ""
+    if "sell_category" not in st.session_state:
+        st.session_state.sell_category = "教材"
+    if "sell_price" not in st.session_state:
+        st.session_state.sell_price = 0
+    if "sell_condition" not in st.session_state:
+        st.session_state.sell_condition = "全新"
+    if "sell_college" not in st.session_state:
+        st.session_state.sell_college = sorted(df['college'].unique())[0]
+    if "sell_seller_grade" not in st.session_state:
+        st.session_state.sell_seller_grade = "大一"
+    if "sell_contact" not in st.session_state:
+        st.session_state.sell_contact = ""
+    if "sell_description" not in st.session_state:
+        st.session_state.sell_description = ""
+    
     with st.form("sell_form"):
         col1, col2 = st.columns(2)
         with col1:
-            item_name = st.text_input("商品名称", placeholder="例如：iPhone 13")
-            category = st.selectbox("商品类别",
-                ["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"])
-            price = st.number_input("价格（元）", min_value=0, step=1)
-            condition = st.selectbox("商品成色", ["全新","几乎全新","轻微使用痕迹","明显使用痕迹"])
+            st.session_state.sell_item_name = st.text_input("商品名称", placeholder="例如：iPhone 13", value=st.session_state.sell_item_name)
+            st.session_state.sell_category = st.selectbox("商品类别",
+                ["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"],
+                index=["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"].index(st.session_state.sell_category))
+            st.session_state.sell_price = st.number_input("价格（元）", min_value=0, step=1, value=st.session_state.sell_price)
+            st.session_state.sell_condition = st.selectbox("商品成色", ["全新","几乎全新","轻微使用痕迹","明显使用痕迹"],
+                index=["全新","几乎全新","轻微使用痕迹","明显使用痕迹"].index(st.session_state.sell_condition))
         with col2:
-            college = st.selectbox("学院", sorted(df['college'].unique()))
-            seller_grade = st.selectbox("卖家年级", ["大一","大二","大三","大四","研究生"])
-            contact = st.text_input("联系方式", placeholder="例如：QQ:123456789 或 微信:xxx")
-            description = st.text_area("商品描述", placeholder="描述商品的具体情况...", height=100)
+            st.session_state.sell_college = st.selectbox("学院", sorted(df['college'].unique()),
+                index=sorted(df['college'].unique()).index(st.session_state.sell_college))
+            st.session_state.sell_seller_grade = st.selectbox("卖家年级", ["大一","大二","大三","大四","研究生"],
+                index=["大一","大二","大三","大四","研究生"].index(st.session_state.sell_seller_grade))
+            st.session_state.sell_contact = st.text_input("联系方式", placeholder="例如：QQ:123456789 或 微信:xxx", value=st.session_state.sell_contact)
+            st.session_state.sell_description = st.text_area("商品描述", placeholder="描述商品的具体情况...", height=100, value=st.session_state.sell_description)
         
-        # AI 润色文案功能
-        polish_btn = st.button("✨ AI 润色文案", key="polish_btn")
-        if polish_btn:
-            if item_name and description:
-                client = get_ai_client()
-                if client:
-                    with st.spinner("AI正在润色文案..."):
-                        try:
-                            prompt = POLISH_PROMPT.format(
-                                original_text=description,
-                                item_name=item_name,
-                                category=category,
-                                condition=condition,
-                                price=price
-                            )
-                            response = client.chat.completions.create(
-                                model=st.session_state.model,
-                                messages=[{"role":"user","content":prompt}],
-                                temperature=0.7
-                            )
-                            polished_text = response.choices[0].message.content.strip()
-                            # 使用 session_state 存储润色后的文案
-                            st.session_state.polished_description = polished_text
-                            # 重新加载页面以显示润色后的文案
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"AI润色失败: {str(e)}")
-                else:
-                    st.warning("请先配置API Key")
-            else:
-                st.warning("请先填写商品名称和描述")
-        
-        # 如果有润色后的文案，显示并使用它
+        # 如果有润色后的文案，显示它
         if "polished_description" in st.session_state and st.session_state.polished_description:
             st.success("🎉 文案润色完成！")
-            st.text_area("润色后的描述", value=st.session_state.polished_description, height=100, key="polished_desc")
-            if st.button("使用润色后的文案"):
-                description = st.session_state.polished_description
-                del st.session_state.polished_description
-                st.rerun()
+            st.text_area("润色后的描述", value=st.session_state.polished_description, height=100, disabled=True)
         
         submit_btn = st.form_submit_button("发布商品")
         if submit_btn:
+            item_name = st.session_state.sell_item_name
+            category = st.session_state.sell_category
+            price = st.session_state.sell_price
+            condition = st.session_state.sell_condition
+            college = st.session_state.sell_college
+            seller_grade = st.session_state.sell_seller_grade
+            contact = st.session_state.sell_contact
+            description = st.session_state.sell_description
+            
+            # 如果有润色后的文案，使用它
+            if "polished_description" in st.session_state and st.session_state.polished_description:
+                description = st.session_state.polished_description
+            
             if item_name and category and price > 0 and contact:
                 new_item = pd.DataFrame({
                     'id': [len(df) + 1],
@@ -661,9 +661,66 @@ with tab_sell:
                 data_path = os.path.join(script_dir, "data", "items.csv")
                 new_item.to_csv(data_path, mode='a', header=False, index=False)
                 st.success("🎉 商品发布成功！")
+                # 清空表单和润色文案
+                st.session_state.sell_item_name = ""
+                st.session_state.sell_category = "教材"
+                st.session_state.sell_price = 0
+                st.session_state.sell_condition = "全新"
+                st.session_state.sell_college = sorted(df['college'].unique())[0]
+                st.session_state.sell_seller_grade = "大一"
+                st.session_state.sell_contact = ""
+                st.session_state.sell_description = ""
+                if "polished_description" in st.session_state:
+                    del st.session_state.polished_description
                 st.rerun()
             else:
                 st.error("请填写完整的商品信息（名称、类别、价格、联系方式为必填项）")
+    
+    # AI 润色文案功能（在表单外面）
+    col_polish, col_clear = st.columns(2)
+    with col_polish:
+        polish_btn = st.button("✨ AI 润色文案")
+    with col_clear:
+        clear_polish_btn = st.button("🗑️ 清除润色")
+    
+    if polish_btn:
+        item_name = st.session_state.sell_item_name
+        description = st.session_state.sell_description
+        category = st.session_state.sell_category
+        condition = st.session_state.sell_condition
+        price = st.session_state.sell_price
+        
+        if item_name and description:
+            client = get_ai_client()
+            if client:
+                with st.spinner("AI正在润色文案..."):
+                    try:
+                        prompt = POLISH_PROMPT.format(
+                            original_text=description,
+                            item_name=item_name,
+                            category=category,
+                            condition=condition,
+                            price=price
+                        )
+                        response = client.chat.completions.create(
+                            model=st.session_state.model,
+                            messages=[{"role":"user","content":prompt}],
+                            temperature=0.7
+                        )
+                        polished_text = response.choices[0].message.content.strip()
+                        st.session_state.polished_description = polished_text
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"AI润色失败: {str(e)}")
+            else:
+                st.warning("请先配置API Key")
+        else:
+            st.warning("请先填写商品名称和描述")
+    
+    if clear_polish_btn:
+        if "polished_description" in st.session_state:
+            del st.session_state.polished_description
+            st.rerun()
 
 st.markdown("---")
 st.caption(" 提示：AI功能已自动配置，可直接使用")
