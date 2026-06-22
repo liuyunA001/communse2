@@ -362,6 +362,16 @@ with st.sidebar:
                 else:
                     st.error("请填写名称、价格和联系方式")
     
+    # 初始化收藏列表
+    if "favorites" not in st.session_state:
+        st.session_state.favorites = []
+    
+    st.markdown("---")
+    st.header("🔍 商品搜索")
+    
+    # 关键词搜索
+    search_query = st.text_input("搜索商品名称或描述", placeholder="输入关键词...")
+    
     st.markdown("---")
     st.header("📊 数据筛选")
     
@@ -387,16 +397,83 @@ with st.sidebar:
     if quick_cat:
         st.info(f"当前快速筛选：{quick_cat}")
     
+    # 筛选逻辑
     filtered_df = df.copy()
+    
+    # 关键词搜索
+    if search_query.strip():
+        filtered_df = filtered_df[
+            filtered_df['name'].str.contains(search_query, case=False) |
+            filtered_df['description'].str.contains(search_query, case=False)
+        ]
+    
     if selected_college != "全部":
         filtered_df = filtered_df[filtered_df['college'] == selected_college]
     filtered_df = filtered_df[(filtered_df['price'] >= price_range[0]) & (filtered_df['price'] <= price_range[1])]
     if quick_cat:
         filtered_df = filtered_df[filtered_df['category'] == quick_cat]
+    
+    # 收藏列表
+    st.markdown("---")
+    st.header("⭐ 我的收藏")
+    if st.session_state.favorites:
+        fav_df = df[df['id'].isin(st.session_state.favorites)]
+        for idx, item in fav_df.iterrows():
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"**{item['name']}** - ¥{item['price']}")
+            with col2:
+                if st.button(f"🗑️", key=f"unfav_{item['id']}", use_container_width=True):
+                    st.session_state.favorites.remove(item['id'])
+                    st.rerun()
+    else:
+        st.info("暂无收藏商品，点击商品卡片的 ⭐ 收藏按钮即可添加")
 
 # -------------------- 主页面 --------------------
 st.title("📦 校园闲置物品智能交易助手")
 st.subheader("让闲置物品找到新主人")
+
+# 商品列表展示
+st.markdown("---")
+st.header("🛒 商品列表")
+st.caption(f"共找到 **{len(filtered_df)}** 件商品")
+
+# 商品卡片展示
+if not filtered_df.empty:
+    # 按3列展示商品
+    cols = st.columns(3)
+    for idx, (_, item) in enumerate(filtered_df.iterrows()):
+        with cols[idx % 3]:
+            with st.container(border=True):
+                # 商品名称和价格
+                st.markdown(f"**{item['name']}**")
+                st.markdown(f"💰 ¥{item['price']}")
+                
+                # 商品信息
+                st.caption(f"🏷️ {item['category']}")
+                st.caption(f"🎨 {item['condition']}")
+                st.caption(f"🏛️ {item['college']}")
+                
+                # 收藏按钮
+                is_favorited = item['id'] in st.session_state.favorites
+                if st.button(f"{'⭐' if is_favorited else '☆'} 收藏", 
+                           key=f"fav_btn_{item['id']}", 
+                           use_container_width=True):
+                    if is_favorited:
+                        st.session_state.favorites.remove(item['id'])
+                    else:
+                        st.session_state.favorites.append(item['id'])
+                    st.rerun()
+                
+                # 查看详情按钮
+                with st.expander("📋 查看详情"):
+                    st.write(f"**描述**: {item['description']}")
+                    st.write(f"**卖家年级**: {item['seller_grade']}")
+                    st.write(f"**销量**: {item['sales_count']}")
+                    st.write(f"**发布日期**: {item['post_date'].strftime('%Y-%m-%d')}")
+                    st.write(f"**联系方式**: {item['contact']}")
+else:
+    st.info("暂无匹配的商品")
 
 tabs_list = ["🤖 AI智能助手", "💰 发布商品"]
 if st.session_state.is_admin:
@@ -605,30 +682,90 @@ with tab_sell:
     if "sell_description" not in st.session_state:
         st.session_state.sell_description = ""
     
-    # 独立的输入控件（不在表单内，这样可以实时获取值）
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state.sell_item_name = st.text_input("商品名称", placeholder="例如：iPhone 13", value=st.session_state.sell_item_name)
-        st.session_state.sell_category = st.selectbox("商品类别",
-            ["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"],
-            index=["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"].index(st.session_state.sell_category))
-        st.session_state.sell_price = st.number_input("价格（元）", min_value=0, step=1, value=st.session_state.sell_price)
-        st.session_state.sell_condition = st.selectbox("商品成色", ["全新","几乎全新","轻微使用痕迹","明显使用痕迹"],
-            index=["全新","几乎全新","轻微使用痕迹","明显使用痕迹"].index(st.session_state.sell_condition))
-    with col2:
-        st.session_state.sell_college = st.selectbox("学院", sorted(df['college'].unique()),
-            index=sorted(df['college'].unique()).index(st.session_state.sell_college))
-        st.session_state.sell_seller_grade = st.selectbox("卖家年级", ["大一","大二","大三","大四","研究生"],
-            index=["大一","大二","大三","大四","研究生"].index(st.session_state.sell_seller_grade))
-        st.session_state.sell_contact = st.text_input("联系方式", placeholder="例如：QQ:123456789 或 微信:xxx", value=st.session_state.sell_contact)
-        st.session_state.sell_description = st.text_area("商品描述", placeholder="描述商品的具体情况...", height=100, value=st.session_state.sell_description)
+    # 使用回调函数实时更新 session_state（不受表单提交限制）
+    def update_session_state(key, value):
+        st.session_state[key] = value
     
-    # 如果有润色后的文案，显示它
-    if "polished_description" in st.session_state and st.session_state.polished_description:
-        st.success("🎉 文案润色完成！")
-        st.text_area("润色后的描述", value=st.session_state.polished_description, height=100, disabled=True)
+    with st.form("sell_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text_input("商品名称", placeholder="例如：iPhone 13", value=st.session_state.sell_item_name, 
+                          on_change=update_session_state, args=("sell_item_name", st.session_state.sell_item_name))
+            st.selectbox("商品类别",
+                ["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"],
+                index=["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"].index(st.session_state.sell_category),
+                on_change=update_session_state, args=("sell_category", st.session_state.sell_category))
+            st.number_input("价格（元）", min_value=0, step=1, value=st.session_state.sell_price,
+                           on_change=update_session_state, args=("sell_price", st.session_state.sell_price))
+            st.selectbox("商品成色", ["全新","几乎全新","轻微使用痕迹","明显使用痕迹"],
+                index=["全新","几乎全新","轻微使用痕迹","明显使用痕迹"].index(st.session_state.sell_condition),
+                on_change=update_session_state, args=("sell_condition", st.session_state.sell_condition))
+        with col2:
+            st.selectbox("学院", sorted(df['college'].unique()),
+                index=sorted(df['college'].unique()).index(st.session_state.sell_college),
+                on_change=update_session_state, args=("sell_college", st.session_state.sell_college))
+            st.selectbox("卖家年级", ["大一","大二","大三","大四","研究生"],
+                index=["大一","大二","大三","大四","研究生"].index(st.session_state.sell_seller_grade),
+                on_change=update_session_state, args=("sell_seller_grade", st.session_state.sell_seller_grade))
+            st.text_input("联系方式", placeholder="例如：QQ:123456789 或 微信:xxx", value=st.session_state.sell_contact,
+                         on_change=update_session_state, args=("sell_contact", st.session_state.sell_contact))
+            st.text_area("商品描述", placeholder="描述商品的具体情况...", height=100, value=st.session_state.sell_description,
+                        on_change=update_session_state, args=("sell_description", st.session_state.sell_description))
+        
+        # 如果有润色后的文案，显示它
+        if "polished_description" in st.session_state and st.session_state.polished_description:
+            st.success("🎉 文案润色完成！")
+            st.text_area("润色后的描述", value=st.session_state.polished_description, height=100, disabled=True)
+        
+        submit_btn = st.form_submit_button("发布商品")
+        if submit_btn:
+            item_name = st.session_state.sell_item_name
+            category = st.session_state.sell_category
+            price = st.session_state.sell_price
+            condition = st.session_state.sell_condition
+            college = st.session_state.sell_college
+            seller_grade = st.session_state.sell_seller_grade
+            contact = st.session_state.sell_contact
+            description = st.session_state.sell_description
+            
+            # 如果有润色后的文案，使用它
+            if "polished_description" in st.session_state and st.session_state.polished_description:
+                description = st.session_state.polished_description
+            
+            if item_name and category and price > 0 and contact:
+                new_item = pd.DataFrame({
+                    'id': [len(df) + 1],
+                    'name': [item_name],
+                    'category': [category],
+                    'price': [price],
+                    'condition': [condition],
+                    'college': [college],
+                    'seller_grade': [seller_grade],
+                    'sales_count': [0],
+                    'post_date': [pd.Timestamp.now()],
+                    'description': [description],
+                    'contact': [contact]
+                })
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                data_path = os.path.join(script_dir, "data", "items.csv")
+                new_item.to_csv(data_path, mode='a', header=False, index=False)
+                st.success("🎉 商品发布成功！")
+                # 清空表单和润色文案
+                st.session_state.sell_item_name = ""
+                st.session_state.sell_category = "教材"
+                st.session_state.sell_price = 0
+                st.session_state.sell_condition = "全新"
+                st.session_state.sell_college = sorted(df['college'].unique())[0]
+                st.session_state.sell_seller_grade = "大一"
+                st.session_state.sell_contact = ""
+                st.session_state.sell_description = ""
+                if "polished_description" in st.session_state:
+                    del st.session_state.polished_description
+                st.rerun()
+            else:
+                st.error("请填写完整的商品信息（名称、类别、价格、联系方式为必填项）")
     
-    # AI 润色文案功能
+    # AI 润色文案功能（在表单外面）
     col_polish, col_clear = st.columns(2)
     with col_polish:
         polish_btn = st.button("✨ AI 润色文案")
@@ -673,56 +810,6 @@ with tab_sell:
         if "polished_description" in st.session_state:
             del st.session_state.polished_description
             st.rerun()
-    
-    # 发布商品按钮（单独的按钮，不在表单内）
-    st.markdown("---")
-    submit_btn = st.button("📤 发布商品", use_container_width=True)
-    if submit_btn:
-        item_name = st.session_state.sell_item_name
-        category = st.session_state.sell_category
-        price = st.session_state.sell_price
-        condition = st.session_state.sell_condition
-        college = st.session_state.sell_college
-        seller_grade = st.session_state.sell_seller_grade
-        contact = st.session_state.sell_contact
-        description = st.session_state.sell_description
-        
-        # 如果有润色后的文案，使用它
-        if "polished_description" in st.session_state and st.session_state.polished_description:
-            description = st.session_state.polished_description
-        
-        if item_name and category and price > 0 and contact:
-            new_item = pd.DataFrame({
-                'id': [len(df) + 1],
-                'name': [item_name],
-                'category': [category],
-                'price': [price],
-                'condition': [condition],
-                'college': [college],
-                'seller_grade': [seller_grade],
-                'sales_count': [0],
-                'post_date': [pd.Timestamp.now()],
-                'description': [description],
-                'contact': [contact]
-            })
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            data_path = os.path.join(script_dir, "data", "items.csv")
-            new_item.to_csv(data_path, mode='a', header=False, index=False)
-            st.success("🎉 商品发布成功！")
-            # 清空表单和润色文案
-            st.session_state.sell_item_name = ""
-            st.session_state.sell_category = "教材"
-            st.session_state.sell_price = 0
-            st.session_state.sell_condition = "全新"
-            st.session_state.sell_college = sorted(df['college'].unique())[0]
-            st.session_state.sell_seller_grade = "大一"
-            st.session_state.sell_contact = ""
-            st.session_state.sell_description = ""
-            if "polished_description" in st.session_state:
-                del st.session_state.polished_description
-            st.rerun()
-        else:
-            st.error("请填写完整的商品信息（名称、类别、价格、联系方式为必填项）")
 
 st.markdown("---")
 st.caption(" 提示：AI功能已自动配置，可直接使用")
