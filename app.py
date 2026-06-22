@@ -14,23 +14,41 @@ def setup_chinese_font():
     """设置 matplotlib 中文字体，避免方框乱码"""
     font_candidates = [
         'Microsoft YaHei', 'SimHei', 'WenQuanYi Micro Hei',
-        'Noto Sans CJK SC', 'PingFang SC', 'Heiti SC', 'sans-serif'
+        'Noto Sans CJK SC', 'PingFang SC', 'Heiti SC',
+        'SimSun', 'FangSong', 'KaiTi',
+        'Noto Serif CJK SC', 'Source Han Sans SC', 'Source Han Serif SC',
+        'DejaVu Sans'
     ]
+    
+    # 先尝试查找系统中安装的中文字体
+    installed_fonts = [f.name for f in fm.fontManager.ttflist]
+    
     for font_name in font_candidates:
-        try:
-            plt.rcParams['font.sans-serif'] = [font_name]
-            plt.rcParams['axes.unicode_minus'] = False
-            fig, ax = plt.subplots(figsize=(0.1, 0.1))
-            ax.set_title('测试', fontsize=1)
-            plt.close(fig)
-            return True
-        except:
-            continue
+        if font_name in installed_fonts:
+            try:
+                plt.rcParams['font.sans-serif'] = [font_name]
+                plt.rcParams['font.family'] = 'sans-serif'
+                plt.rcParams['axes.unicode_minus'] = False
+                plt.rcParams['axes.labelsize'] = 12
+                plt.rcParams['axes.titlesize'] = 14
+                plt.rcParams['legend.fontsize'] = 10
+                plt.rcParams['xtick.labelsize'] = 10
+                plt.rcParams['ytick.labelsize'] = 10
+                
+                fig, ax = plt.subplots(figsize=(0.1, 0.1))
+                ax.set_title('测试', fontsize=1)
+                plt.close(fig)
+                return font_name
+            except Exception as e:
+                continue
+    
+    # 如果都失败，使用默认字体
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['axes.unicode_minus'] = False
-    return False
+    return None
 
-setup_chinese_font()
+selected_font = setup_chinese_font()
 
 # -------------------- 页面配置 --------------------
 st.set_page_config(page_title="校园闲置物品智能交易助手", page_icon="📦", layout="wide")
