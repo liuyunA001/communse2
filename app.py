@@ -12,21 +12,50 @@ load_dotenv()
 # -------------------- 字体配置（解决中文显示方块问题） --------------------
 def setup_chinese_font():
     """设置 matplotlib 中文字体，避免方框乱码"""
+    # 优先尝试项目内置的字体文件（跨平台兼容）
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    font_dir = os.path.join(script_dir, "fonts")
+    font_files = []
+    if os.path.exists(font_dir):
+        for f in os.listdir(font_dir):
+            if f.lower().endswith(('.ttf', '.otf', '.ttc')):
+                font_files.append(os.path.join(font_dir, f))
+    
+    # 如果有内置字体文件，使用它
+    for font_path in font_files:
+        try:
+            fm.fontManager.addfont(font_path)
+            font_name = fm.FontProperties(fname=font_path).get_name()
+            plt.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans']
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['axes.unicode_minus'] = False
+            plt.rcParams['axes.labelsize'] = 12
+            plt.rcParams['axes.titlesize'] = 14
+            plt.rcParams['legend.fontsize'] = 10
+            plt.rcParams['xtick.labelsize'] = 10
+            plt.rcParams['ytick.labelsize'] = 10
+            return font_name
+        except Exception as e:
+            continue
+    
+    # 否则尝试系统中常见的字体（按平台）
     font_candidates = [
-        'Microsoft YaHei', 'SimHei', 'WenQuanYi Micro Hei',
-        'Noto Sans CJK SC', 'PingFang SC', 'Heiti SC',
-        'SimSun', 'FangSong', 'KaiTi',
-        'Noto Serif CJK SC', 'Source Han Sans SC', 'Source Han Serif SC',
+        'Noto Sans CJK SC', 'Noto Sans CJK', 'Noto Sans CJK JP',
+        'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei',
+        'Source Han Sans SC', 'Source Han Sans CN',
+        'Source Han Serif SC', 'Source Han Serif CN',
+        'PingFang SC', 'Heiti SC', 'STHeiti',
+        'Microsoft YaHei', 'SimHei', 'SimSun', 'FangSong', 'KaiTi',
+        'Arial Unicode MS',
         'DejaVu Sans'
     ]
     
-    # 先尝试查找系统中安装的中文字体
     installed_fonts = [f.name for f in fm.fontManager.ttflist]
     
     for font_name in font_candidates:
         if font_name in installed_fonts:
             try:
-                plt.rcParams['font.sans-serif'] = [font_name]
+                plt.rcParams['font.sans-serif'] = [font_name, 'DejaVu Sans']
                 plt.rcParams['font.family'] = 'sans-serif'
                 plt.rcParams['axes.unicode_minus'] = False
                 plt.rcParams['axes.labelsize'] = 12
@@ -34,15 +63,11 @@ def setup_chinese_font():
                 plt.rcParams['legend.fontsize'] = 10
                 plt.rcParams['xtick.labelsize'] = 10
                 plt.rcParams['ytick.labelsize'] = 10
-                
-                fig, ax = plt.subplots(figsize=(0.1, 0.1))
-                ax.set_title('测试', fontsize=1)
-                plt.close(fig)
                 return font_name
             except Exception as e:
                 continue
     
-    # 如果都失败，使用默认字体
+    # 最后使用默认
     plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['axes.unicode_minus'] = False
