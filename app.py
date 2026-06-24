@@ -184,6 +184,12 @@ if "show_quick_sell" not in st.session_state:
     st.session_state.show_quick_sell = False
 if "quick_filter_category" not in st.session_state:
     st.session_state.quick_filter_category = None
+if "favorites" not in st.session_state:
+    st.session_state.favorites = []
+if "my_items" not in st.session_state:
+    st.session_state.my_items = []
+if "item_status" not in st.session_state:
+    st.session_state.item_status = {}  # 记录商品状态：上架/下架
 
 # -------------------- 数据加载 --------------------
 @st.cache_data
@@ -212,7 +218,7 @@ def load_data():
         return sample_data
     
     df = pd.read_csv(data_path)
-    df['post_date'] = pd.to_datetime(df['post_date'])
+    df['post_date'] = pd.to_datetime(df['post_date'], format='mixed')
     df['month'] = df['post_date'].dt.month_name()
     return df
 
@@ -224,18 +230,36 @@ except Exception as e:
 
 # -------------------- AI 客户端 --------------------
 def get_ai_client():
-    # 优先使用环境变量中的配置（来自 .env 文件），其次使用用户设置
+    """获取AI客户端，优先使用环境变量配置"""
     api_key = os.getenv("API_KEY") or st.session_state.get("api_key", "")
     base_url = os.getenv("BASE_URL") or st.session_state.get("base_url", "https://api.deepseek.com/v1")
     model = os.getenv("MODEL") or st.session_state.get("model", "deepseek-chat")
     
     if api_key:
-        # 保存到 session_state 供后续使用
         st.session_state.api_key = api_key
         st.session_state.base_url = base_url
         st.session_state.model = model
         return OpenAI(api_key=api_key, base_url=base_url)
     return None
+
+def test_api_connection():
+    """测试API连接状态"""
+    client = get_ai_client()
+    if not client:
+        return {"status": "error", "message": "未配置API Key"}
+    
+    try:
+        response = client.chat.completions.create(
+            model=st.session_state.get("model", "deepseek-chat"),
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=10
+        )
+        if response.choices:
+            return {"status": "success", "message": "API连接正常"}
+        else:
+            return {"status": "error", "message": "API响应异常"}
+    except Exception as e:
+        return {"status": "error", "message": f"连接失败: {str(e)}"}
 
 # -------------------- 提示词 --------------------
 MATCH_PROMPT = """
@@ -288,6 +312,58 @@ POLISH_PROMPT = """
 4. 保持在50-80字左右
 
 润色后的文案：
+"""
+
+QA_PROMPT = """
+你是一个校园闲置物品交易平台的智能客服助手。
+请回答用户关于闲置物品交易的问题。
+
+可用功能：
+1. 🎯 货源匹配 - 根据用户需求推荐合适的商品
+2. ✍️ 文案生成 - 为商品生成吸引人的描述
+3. 💰 价格建议 - 分析商品给出合理定价
+4. 🔍 智能搜索 - 语义搜索商品
+
+常见问题：
+- 如何发布闲置物品？
+- 如何搜索商品？
+- 交易流程是怎样的？
+- 如何联系卖家？
+- 如何保障交易安全？
+
+请用友好、简洁的语言回答用户问题。如果是关于商品匹配或搜索的请求，请说明可以使用货源匹配功能。
+"""
+
+SEARCH_PROMPT = """
+你是一个智能商品搜索助手。请根据用户的搜索查询，分析用户可能想要找的商品类型。
+
+用户查询：{query}
+
+请从以下商品列表中找出最相关的商品：
+{items_info}
+
+请列出3-5个最相关的商品，包括：商品名称、类别、价格、成色。
+如果没有找到相关商品，请说明没有匹配结果。
+"""
+
+# 系统提示词 - 用于上下文理解
+SYSTEM_PROMPT = """
+你是一个校园闲置物品交易平台的AI助手"校园小闲"。
+
+你的职责：
+1. 理解用户的需求并提供帮助
+2. 可以进行货源匹配、文案生成、价格建议、智能搜索
+3. 回答关于平台使用的问题
+4. 保持友好、专业的语气
+
+对话历史：
+{history}
+
+当前用户消息：
+{user_message}
+
+请根据对话历史理解上下文，并给出合适的回复。
+如果是商品匹配或搜索请求，请使用货源匹配功能；如果是文案相关请求，请使用文案生成功能。
 """
 
 # -------------------- 管理员设置 --------------------
@@ -362,18 +438,11 @@ with st.sidebar:
                 else:
                     st.error("请填写名称、价格和联系方式")
     
-    # 初始化收藏列表
-    if "favorites" not in st.session_state:
-        st.session_state.favorites = []
-    
     st.markdown("---")
-    st.header("🔍 商品搜索")
+    st.header("🔍 数据筛选")
     
     # 关键词搜索
-    search_query = st.text_input("搜索商品名称或描述", placeholder="输入关键词...")
-    
-    st.markdown("---")
-    st.header("📊 数据筛选")
+    search_keyword = st.text_input("🔍 搜索商品", placeholder="输入商品名称关键词...")
     
     selected_college = st.selectbox("选择学院", ["全部"] + sorted(df['college'].unique()))
     price_range = st.slider("价格范围", 0, 3000, (0, 3000))
@@ -397,92 +466,32 @@ with st.sidebar:
     if quick_cat:
         st.info(f"当前快速筛选：{quick_cat}")
     
-    # 筛选逻辑
     filtered_df = df.copy()
     
-    # 关键词搜索
-    if search_query.strip():
-        filtered_df = filtered_df[
-            filtered_df['name'].str.contains(search_query, case=False) |
-            filtered_df['description'].str.contains(search_query, case=False)
-        ]
+    # 关键词搜索过滤
+    if search_keyword.strip():
+        filtered_df = filtered_df[filtered_df['name'].str.contains(search_keyword.strip(), case=False)]
     
     if selected_college != "全部":
         filtered_df = filtered_df[filtered_df['college'] == selected_college]
     filtered_df = filtered_df[(filtered_df['price'] >= price_range[0]) & (filtered_df['price'] <= price_range[1])]
     if quick_cat:
         filtered_df = filtered_df[filtered_df['category'] == quick_cat]
-    
-    # 收藏列表
-    st.markdown("---")
-    st.header("⭐ 我的收藏")
-    if st.session_state.favorites:
-        fav_df = df[df['id'].isin(st.session_state.favorites)]
-        for idx, item in fav_df.iterrows():
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"**{item['name']}** - ¥{item['price']}")
-            with col2:
-                if st.button(f"🗑️", key=f"unfav_{item['id']}", use_container_width=True):
-                    st.session_state.favorites.remove(item['id'])
-                    st.rerun()
-    else:
-        st.info("暂无收藏商品，点击商品卡片的 ⭐ 收藏按钮即可添加")
 
 # -------------------- 主页面 --------------------
 st.title("📦 校园闲置物品智能交易助手")
 st.subheader("让闲置物品找到新主人")
 
-# 商品列表展示
-st.markdown("---")
-st.header("🛒 商品列表")
-st.caption(f"共找到 **{len(filtered_df)}** 件商品")
-
-# 商品卡片展示
-if not filtered_df.empty:
-    # 按3列展示商品
-    cols = st.columns(3)
-    for idx, (_, item) in enumerate(filtered_df.iterrows()):
-        with cols[idx % 3]:
-            with st.container(border=True):
-                # 商品名称和价格
-                st.markdown(f"**{item['name']}**")
-                st.markdown(f"💰 ¥{item['price']}")
-                
-                # 商品信息
-                st.caption(f"🏷️ {item['category']}")
-                st.caption(f"🎨 {item['condition']}")
-                st.caption(f"🏛️ {item['college']}")
-                
-                # 收藏按钮
-                is_favorited = item['id'] in st.session_state.favorites
-                if st.button(f"{'⭐' if is_favorited else '☆'} 收藏", 
-                           key=f"fav_btn_{item['id']}", 
-                           use_container_width=True):
-                    if is_favorited:
-                        st.session_state.favorites.remove(item['id'])
-                    else:
-                        st.session_state.favorites.append(item['id'])
-                    st.rerun()
-                
-                # 查看详情按钮
-                with st.expander("📋 查看详情"):
-                    st.write(f"**描述**: {item['description']}")
-                    st.write(f"**卖家年级**: {item['seller_grade']}")
-                    st.write(f"**销量**: {item['sales_count']}")
-                    st.write(f"**发布日期**: {item['post_date'].strftime('%Y-%m-%d')}")
-                    st.write(f"**联系方式**: {item['contact']}")
-else:
-    st.info("暂无匹配的商品")
-
-tabs_list = ["🤖 AI智能助手", "💰 发布商品"]
+tabs_list = ["🤖 AI智能助手", "📦 商品列表", "💰 发布商品", "👤 我的管理"]
 if st.session_state.is_admin:
     tabs_list.append("📊 数据看板")
 
 tab_objects = st.tabs(tabs_list)
 tab_ai = tab_objects[0]
-tab_sell = tab_objects[1]
-tab_data = tab_objects[2] if st.session_state.is_admin else None
+tab_items = tab_objects[1]
+tab_sell = tab_objects[2]
+tab_my = tab_objects[3]
+tab_data = tab_objects[4] if st.session_state.is_admin else None
 
 # -------------------- 数据看板（治愈系配色） --------------------
 if st.session_state.is_admin and tab_data:
@@ -574,90 +583,228 @@ if st.session_state.is_admin and tab_data:
                          })
 
 # -------------------- AI 智能助手 --------------------
+def get_items_info(items_df):
+    """生成商品信息字符串，用于AI提示词"""
+    return "\n".join([f"- {row['name']} | {row['category']} | {row['price']}元 | {row['condition']} | {row['college']} | {row['seller_grade']}" 
+                      for _, row in items_df.iterrows()])
+
+def detect_intent(user_message):
+    """检测用户意图"""
+    message = user_message.lower()
+    intent = "qa"  # 默认是问答
+    
+    # 检测货源匹配意图
+    if any(keyword in message for keyword in ['预算', '需要', '想买', '求购', '推荐', '匹配', '找']):
+        intent = "match"
+    
+    # 检测文案生成意图
+    elif any(keyword in message for keyword in ['文案', '描述', '介绍', '写', '生成']):
+        intent = "desc"
+    
+    # 检测搜索意图
+    elif any(keyword in message for keyword in ['搜索', '查找', '找', '有没有']):
+        intent = "search"
+    
+    # 检测价格相关意图
+    elif any(keyword in message for keyword in ['价格', '多少钱', '定价', '估价']):
+        intent = "price"
+    
+    return intent
+
+def build_context_history():
+    """构建对话历史上下文"""
+    history = []
+    for msg in st.session_state.chat_history[-5:]:  # 保留最近5条对话
+        role = "用户" if msg['role'] == 'user' else "助手"
+        history.append(f"{role}: {msg['content']}")
+    return "\n".join(history)
+
 with tab_ai:
     st.subheader("🤖 智能客服")
-    for msg in st.session_state.chat_history:
-        if msg['role'] == 'user':
-            st.chat_message("user").write(msg['content'])
-        else:
-            st.chat_message("assistant").write(msg['content'])
     
-    user_input = st.text_input("请输入您的需求（如：预算200元，大一，需要教材）", key="user_input")
+    # 使用示例（匹配数据库中的商品）
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #E8F5E9 0%, #E3F2FD 100%); padding: 1rem 1.5rem; border-radius: 12px; margin-bottom: 1rem;">
+        <strong style="color: #4a6b4a;">💡 试试这些示例：</strong>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.8rem;">
+            <span style="background: white; padding: 6px 12px; border-radius: 16px; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08);" onclick="document.querySelector('input[placeholder*=需求]').value='需要教材'; document.querySelector('input[placeholder*=需求]').focus();">
+                需要教材
+            </span>
+            <span style="background: white; padding: 6px 12px; border-radius: 16px; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08);" onclick="document.querySelector('input[placeholder*=需求]').value='预算50元，需要电器'; document.querySelector('input[placeholder*=需求]').focus();">
+                预算50元，需要电器
+            </span>
+            <span style="background: white; padding: 6px 12px; border-radius: 16px; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08);" onclick="document.querySelector('input[placeholder*=需求]').value='需要数码产品'; document.querySelector('input[placeholder*=需求]').focus();">
+                需要数码产品
+            </span>
+            <span style="background: white; padding: 6px 12px; border-radius: 16px; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08);" onclick="document.querySelector('input[placeholder*=需求]').value='数学教材'; document.querySelector('input[placeholder*=需求]').focus();">
+                数学教材
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        match_btn = st.button("🎯 货源匹配")
-    with col2:
-        desc_btn = st.button("✍️ 生成文案")
-    with col3:
-        reset_btn = st.button("🔄 清空对话")
-    
-    if reset_btn:
+    # 初始化对话历史
+    if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     
-    if match_btn and user_input:
-        # 使用原始数据进行匹配，不受侧边栏筛选影响
-        matched_items = df.copy()
-        import re
-        price_match = re.search(r'预算(\d+)元|价格(\d+)元|(\d+)元', user_input)
-        if price_match:
-            target_price = int(price_match.group(1) or price_match.group(2) or price_match.group(3))
-            matched_items = matched_items[(matched_items['price'] >= target_price - 100) & 
-                                          (matched_items['price'] <= target_price + 100)]
-        
-        category_keywords = ['教材','电器','数码','家具','服装','运动','美妆','食品','书籍']
-        matched_categories = [k for k in category_keywords if k in user_input]
-        if matched_categories:
-            matched_items = matched_items[matched_items['category'].str.contains('|'.join(matched_categories))]
-        
-        if len(matched_items) == 0:
-            result = "😔 没有找到匹配的商品，试试其他关键词吧！"
+    # 显示对话历史
+    for msg in st.session_state.chat_history:
+        if msg['role'] == 'user':
+            with st.chat_message("user", avatar="👤"):
+                st.write(msg['content'])
         else:
-            items_info = "\n".join([f"- {row['name']} | {row['category']} | {row['price']}元 | {row['condition']} | {row['college']} | {row['seller_grade']} | 联系方式:{row['contact']}" 
-                                    for _, row in matched_items.iterrows()])
-            prompt = MATCH_PROMPT.format(items_info=items_info, user_query=user_input)
-            client = get_ai_client()
-            if client:
-                with st.spinner("正在匹配货源..."):
-                    try:
-                        response = client.chat.completions.create(
-                            model=st.session_state.model,
-                            messages=[{"role":"user","content":prompt}],
-                            temperature=0.7
-                        )
-                        result = response.choices[0].message.content
-                    except Exception as e:
-                        result = f"AI调用失败，显示原始匹配结果：\n{items_info}"
-            else:
-                result = f"API Key未配置，显示原始匹配结果：\n{items_info}"
-        st.session_state.chat_history.append({"role":"user","content":user_input})
-        st.session_state.chat_history.append({"role":"assistant","content":result})
-        st.rerun()
+            with st.chat_message("assistant", avatar="🤖"):
+                st.write(msg['content'])
     
-    if desc_btn and user_input:
-        item_names = filtered_df['name'].tolist()
-        selected_item = st.selectbox("选择商品", item_names, key="item_select")
-        item = filtered_df[filtered_df['name'] == selected_item].iloc[0]
-        prompt = DESC_PROMPT.format(item_name=item['name'], category=item['category'],
-                                    condition=item['condition'], price=item['price'],
-                                    description=item['description'])
-        client = get_ai_client()
-        if client:
-            with st.spinner("正在生成文案..."):
-                try:
-                    response = client.chat.completions.create(
-                        model=st.session_state.model,
-                        messages=[{"role":"user","content":prompt}],
-                        temperature=0.7
-                    )
-                    result = response.choices[0].message.content
-                    st.session_state.chat_history.append({"role":"user","content":f"为「{selected_item}」生成文案"})
-                    st.session_state.chat_history.append({"role":"assistant","content":result})
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"AI调用失败: {str(e)}")
-        else:
-            st.warning("请先配置API Key")
+    # 输入区域 - 使用普通输入框以便按钮能读取内容
+    user_input_text = st.text_input("请输入您的需求...", key="user_input_field")
+    
+    # 精简按钮（仅保留核心功能）
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🎯 智能匹配", use_container_width=True):
+            # 获取输入框中的内容
+            input_text = st.session_state.get("user_input_field", "").strip()
+            if not input_text:
+                input_text = "帮我推荐合适的商品"
+            
+            # 添加用户消息到历史
+            st.session_state.chat_history.append({"role":"user","content":input_text})
+            
+            # 检测用户意图并处理
+            intent = detect_intent(input_text)
+            client = get_ai_client()
+            
+            if intent == "match":
+                matched_items = df.copy()
+                import re
+                price_match = re.search(r'预算(\d+)元|价格(\d+)元|(\d+)元', input_text)
+                if price_match:
+                    target_price = int(price_match.group(1) or price_match.group(2) or price_match.group(3))
+                    matched_items = matched_items[(matched_items['price'] >= target_price - 100) & 
+                                                  (matched_items['price'] <= target_price + 100)]
+                category_keywords = ['教材','电器','数码','家具','服装','运动','美妆','食品','书籍']
+                matched_categories = [k for k in category_keywords if k in input_text]
+                if matched_categories:
+                    matched_items = matched_items[matched_items['category'].str.contains('|'.join(matched_categories))]
+                
+                if len(matched_items) == 0:
+                    result = "😔 没有找到匹配的商品，试试其他关键词吧！"
+                else:
+                    items_info = get_items_info(matched_items)
+                    prompt = MATCH_PROMPT.format(items_info=items_info, user_query=input_text)
+                    
+                    if client:
+                        with st.spinner("正在匹配货源..."):
+                            try:
+                                response = client.chat.completions.create(
+                                    model=st.session_state.model,
+                                    messages=[{"role":"user","content":prompt}],
+                                    temperature=0.7
+                                )
+                                result = response.choices[0].message.content
+                            except Exception as e:
+                                result = f"AI调用失败，显示原始匹配结果：\n{items_info}"
+                    else:
+                        result = f"API Key未配置，显示原始匹配结果：\n{items_info}"
+            else:
+                if client:
+                    with st.spinner("正在思考..."):
+                        try:
+                            response = client.chat.completions.create(
+                                model=st.session_state.model,
+                                messages=[{"role":"user","content":input_text}],
+                                temperature=0.7
+                            )
+                            result = response.choices[0].message.content
+                        except Exception as e:
+                            result = f"AI调用失败: {str(e)}"
+                else:
+                    result = "请先配置API Key"
+            
+            st.session_state.chat_history.append({"role":"assistant","content":result})
+            st.rerun()
+    with col2:
+        if st.button("🔄 清空对话", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+    
+    # 底部API状态提示（自动检测）
+    api_key = os.getenv("API_KEY") or st.session_state.get("api_key", "")
+    if api_key:
+        st.markdown("<p style='text-align: center; font-size: 12px; color: #4CAF50; margin-top: 1rem;'>✅ API已配置</p>", unsafe_allow_html=True)
+    else:
+        st.markdown("<p style='text-align: center; font-size: 12px; color: #FF9800; margin-top: 1rem;'>⚠️ API未配置，部分功能受限</p>", unsafe_allow_html=True)
+    
+# -------------------- 商品列表 --------------------
+with tab_items:
+    st.subheader("📦 商品列表")
+    
+    # 显示筛选结果数量
+    st.info(f"当前显示 {len(filtered_df)} 件商品")
+    
+    # 收藏列表入口
+    if st.session_state.favorites:
+        with st.expander(f"❤️ 我的收藏 ({len(st.session_state.favorites)})", expanded=False):
+            favorite_ids = [item['id'] for item in st.session_state.favorites]
+            favorite_df = df[df['id'].isin(favorite_ids)]
+            st.dataframe(favorite_df[['name','category','price','condition','college','contact']],
+                         hide_index=True,
+                         column_config={
+                             "name":"商品名称","category":"类别",
+                             "price":st.column_config.NumberColumn("价格(元)", format="%.2f"),
+                             "condition":"成色","college":"学院","contact":"联系方式"
+                         })
+    
+    # 商品卡片展示
+    if len(filtered_df) > 0:
+        for _, row in filtered_df.iterrows():
+            is_favorite = row['id'] in [item['id'] for item in st.session_state.favorites]
+            
+            with st.container():
+                col_info, col_action = st.columns([4, 1])
+                with col_info:
+                    st.markdown(f"""
+                    <div class="glass-card" style="display: flex; align-items: center; justify-content: space-between;">
+                        <div style="flex: 1;">
+                            <h4 style="margin: 0 0 8px;">{row['name']}</h4>
+                            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                <span style="background: #E8F5E9; padding: 4px 12px; border-radius: 12px; font-size: 12px;">{row['category']}</span>
+                                <span style="background: #FFF3E0; padding: 4px 12px; border-radius: 12px; font-size: 12px;">{row['condition']}</span>
+                                <span style="background: #E3F2FD; padding: 4px 12px; border-radius: 12px; font-size: 12px;">{row['college']}</span>
+                            </div>
+                            <p style="margin: 8px 0; color: #666; font-size: 14px;">{row['description'] if row['description'] else '暂无描述'}</p>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 20px; font-weight: bold; color: #E57373;">¥{row['price']}</span>
+                                <span style="font-size: 12px; color: #888;">卖家年级: {row['seller_grade']}</span>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_action:
+                    # 收藏按钮
+                    if st.button("❤️" if is_favorite else "🤍", 
+                                key=f"favorite_{row['id']}",
+                                help="收藏/取消收藏"):
+                        if is_favorite:
+                            st.session_state.favorites = [item for item in st.session_state.favorites if item['id'] != row['id']]
+                        else:
+                            st.session_state.favorites.append({
+                                'id': row['id'],
+                                'name': row['name'],
+                                'category': row['category'],
+                                'price': row['price']
+                            })
+                        st.rerun()
+                    # 显示联系方式
+                    st.markdown(f"""
+                    <div style="margin-top: 8px; padding: 8px; background: #f8f9fa; border-radius: 8px;">
+                        <small style="color: #666;">联系方式:</small>
+                        <p style="margin: 4px 0; font-size: 12px;">{row['contact']}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+    else:
+        st.warning("😔 没有找到符合条件的商品")
 
 # -------------------- 发布商品 --------------------
 with tab_sell:
@@ -689,28 +836,20 @@ with tab_sell:
     with st.form("sell_form"):
         col1, col2 = st.columns(2)
         with col1:
-            st.text_input("商品名称", placeholder="例如：iPhone 13", value=st.session_state.sell_item_name, 
-                          on_change=update_session_state, args=("sell_item_name", st.session_state.sell_item_name))
-            st.selectbox("商品类别",
+            st.session_state.sell_item_name = st.text_input("商品名称", placeholder="例如：iPhone 13", value=st.session_state.sell_item_name)
+            st.session_state.sell_category = st.selectbox("商品类别",
                 ["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"],
-                index=["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"].index(st.session_state.sell_category),
-                on_change=update_session_state, args=("sell_category", st.session_state.sell_category))
-            st.number_input("价格（元）", min_value=0, step=1, value=st.session_state.sell_price,
-                           on_change=update_session_state, args=("sell_price", st.session_state.sell_price))
-            st.selectbox("商品成色", ["全新","几乎全新","轻微使用痕迹","明显使用痕迹"],
-                index=["全新","几乎全新","轻微使用痕迹","明显使用痕迹"].index(st.session_state.sell_condition),
-                on_change=update_session_state, args=("sell_condition", st.session_state.sell_condition))
+                index=["教材","电器","数码","家具","服装","运动","美妆","其他","数码配件","日用品","运动器材","乐器","鞋靴","箱包"].index(st.session_state.sell_category))
+            st.session_state.sell_price = st.number_input("价格（元）", min_value=0, step=1, value=st.session_state.sell_price)
+            st.session_state.sell_condition = st.selectbox("商品成色", ["全新","几乎全新","轻微使用痕迹","明显使用痕迹"],
+                index=["全新","几乎全新","轻微使用痕迹","明显使用痕迹"].index(st.session_state.sell_condition))
         with col2:
-            st.selectbox("学院", sorted(df['college'].unique()),
-                index=sorted(df['college'].unique()).index(st.session_state.sell_college),
-                on_change=update_session_state, args=("sell_college", st.session_state.sell_college))
-            st.selectbox("卖家年级", ["大一","大二","大三","大四","研究生"],
-                index=["大一","大二","大三","大四","研究生"].index(st.session_state.sell_seller_grade),
-                on_change=update_session_state, args=("sell_seller_grade", st.session_state.sell_seller_grade))
-            st.text_input("联系方式", placeholder="例如：QQ:123456789 或 微信:xxx", value=st.session_state.sell_contact,
-                         on_change=update_session_state, args=("sell_contact", st.session_state.sell_contact))
-            st.text_area("商品描述", placeholder="描述商品的具体情况...", height=100, value=st.session_state.sell_description,
-                        on_change=update_session_state, args=("sell_description", st.session_state.sell_description))
+            st.session_state.sell_college = st.selectbox("学院", sorted(df['college'].unique()),
+                index=sorted(df['college'].unique()).index(st.session_state.sell_college))
+            st.session_state.sell_seller_grade = st.selectbox("卖家年级", ["大一","大二","大三","大四","研究生"],
+                index=["大一","大二","大三","大四","研究生"].index(st.session_state.sell_seller_grade))
+            st.session_state.sell_contact = st.text_input("联系方式", placeholder="例如：QQ:123456789 或 微信:xxx", value=st.session_state.sell_contact)
+            st.session_state.sell_description = st.text_area("商品描述", placeholder="描述商品的具体情况...", height=100, value=st.session_state.sell_description)
         
         # 如果有润色后的文案，显示它
         if "polished_description" in st.session_state and st.session_state.polished_description:
@@ -750,6 +889,20 @@ with tab_sell:
                 data_path = os.path.join(script_dir, "data", "items.csv")
                 new_item.to_csv(data_path, mode='a', header=False, index=False)
                 st.success("🎉 商品发布成功！")
+                # 将商品添加到「我的商品」列表
+                new_item_info = {
+                    'id': len(df) + 1,
+                    'name': item_name,
+                    'category': category,
+                    'price': price,
+                    'condition': condition,
+                    'college': college,
+                    'seller_grade': seller_grade,
+                    'contact': contact,
+                    'description': description
+                }
+                st.session_state.my_items.append(new_item_info)
+                st.session_state.item_status[str(len(df) + 1)] = '上架'
                 # 清空表单和润色文案
                 st.session_state.sell_item_name = ""
                 st.session_state.sell_category = "教材"
@@ -765,10 +918,10 @@ with tab_sell:
             else:
                 st.error("请填写完整的商品信息（名称、类别、价格、联系方式为必填项）")
     
-    # AI 润色文案功能（在表单外面）
+    # AI 润色文案功能（在表单外面）- 帮您撰写更吸引人的商品描述
     col_polish, col_clear = st.columns(2)
     with col_polish:
-        polish_btn = st.button("✨ AI 润色文案")
+        polish_btn = st.button("✨ AI 润色描述", help="帮您将商品描述变得更吸引人，突出卖点")
     with col_clear:
         clear_polish_btn = st.button("🗑️ 清除润色")
     
@@ -778,6 +931,10 @@ with tab_sell:
         category = st.session_state.sell_category
         condition = st.session_state.sell_condition
         price = st.session_state.sell_price
+        
+        # 调试信息
+        st.write(f"item_name: '{item_name}', len={len(item_name) if item_name else 0}")
+        st.write(f"description: '{description}', len={len(description) if description else 0}")
         
         if item_name.strip() and description.strip():
             client = get_ai_client()
@@ -810,6 +967,76 @@ with tab_sell:
         if "polished_description" in st.session_state:
             del st.session_state.polished_description
             st.rerun()
+
+# -------------------- 我的管理 --------------------
+with tab_my:
+    st.subheader("👤 我的管理")
+    
+    # 收藏管理
+    st.markdown("### ❤️ 我的收藏")
+    if st.session_state.favorites:
+        for idx, item in enumerate(st.session_state.favorites):
+            col_info, col_action = st.columns([4, 1])
+            with col_info:
+                st.markdown(f"""
+                <div class="glass-card">
+                    <h4>{item['name']}</h4>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                        <span style="background: #E8F5E9; padding: 4px 12px; border-radius: 12px; font-size: 12px;">{item['category']}</span>
+                        <span style="background: #FFF3E0; padding: 4px 12px; border-radius: 12px; font-size: 12px;">¥{item['price']}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_action:
+                if st.button(f"🗑️", key=f"del_fav_{idx}", help="取消收藏"):
+                    st.session_state.favorites.pop(idx)
+                    st.rerun()
+    else:
+        st.info("暂无收藏的商品")
+    
+    st.markdown("---")
+    
+    # 我的商品管理
+    st.markdown("### 📦 我的商品")
+    if st.session_state.my_items:
+        for idx, item in enumerate(st.session_state.my_items):
+            item_id_str = str(item['id'])
+            status = st.session_state.item_status.get(item_id_str, '上架')
+            
+            with st.container():
+                st.markdown(f"""
+                <div class="glass-card">
+                    <h4>{item['name']}</h4>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+                        <span style="background: #E8F5E9; padding: 4px 12px; border-radius: 12px; font-size: 12px;">{item['category']}</span>
+                        <span style="background: #FFF3E0; padding: 4px 12px; border-radius: 12px; font-size: 12px;">{item['condition']}</span>
+                        <span style="background: {'#C8E6C9' if status == '上架' else '#FFCDD2'}; padding: 4px 12px; border-radius: 12px; font-size: 12px;">{status}</span>
+                    </div>
+                    <p style="color: #666; font-size: 14px; margin-bottom: 8px;">{item['description'] if item['description'] else '暂无描述'}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # 操作区域
+                col_price, col_status, col_delete = st.columns([2, 2, 1])
+                with col_price:
+                    new_price = st.number_input(f"修改价格（元）", min_value=0, step=1, value=item['price'], key=f"price_{item_id_str}")
+                    if st.button(f"💾 保存价格", key=f"save_price_{item_id_str}"):
+                        item['price'] = new_price
+                        st.success("价格已更新！")
+                
+                with col_status:
+                    if st.button(f"🔄 {'下架' if status == '上架' else '上架'}", key=f"toggle_{item_id_str}"):
+                        new_status = '下架' if status == '上架' else '上架'
+                        st.session_state.item_status[item_id_str] = new_status
+                        st.rerun()
+                
+                with col_delete:
+                    if st.button(f"🗑️ 删除", key=f"del_item_{item_id_str}"):
+                        st.session_state.my_items.pop(idx)
+                        del st.session_state.item_status[item_id_str]
+                        st.rerun()
+    else:
+        st.info("暂无发布的商品")
 
 st.markdown("---")
 st.caption(" 提示：AI功能已自动配置，可直接使用")
